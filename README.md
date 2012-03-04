@@ -10,4 +10,4 @@ KNOWN PROBLEMS
 This will cause hard crashes (actually, `abort`s) when an error comes from a
 non-main thread.  This was enough to get me the messages I cared about, so there
 is currently no attempt to fix this.  (It will probably require rewriting in C++
-instead of JavaScript, and thus require a compilation staep.)
+instead of JavaScript, and thus require a compilation step.)
