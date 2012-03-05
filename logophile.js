@@ -7,9 +7,11 @@ function Logophile() {
               .getService(Ci.jsdIDebuggerService);
   jsd.asyncOn(this);
   this.lastException = { message: undefined, frames: [] };
-  Cc["@mozilla.org/consoleservice;1"]
-    .getService(Ci.nsIConsoleService)
-    .registerListener({observe: this.observeMessage.bind(this)});
+  let messages = {};
+  this._consoleService.getMessageArray(messages, {});
+  for each (let message in messages.value) {
+    this.observeMessage(message);
+  }
 }
 
 XPCOMUtils.defineLazyGetter(Logophile.prototype, "file", function() {
@@ -37,54 +39,10 @@ Logophile.prototype.observe = function Logophile_observe(aSubject, aTopic, aData
   /* nothing */
 };
 
-/***** nsIConosoleListener *****/
-Logophile.prototype.observeMessage = function Logophile_observeMessage(aMessage) {
-  let message = aMessage.message;
-  if (aMessage instanceof Ci.nsIScriptError) {
-    message = aMessage.errorMessage;
-  }
-  this.file.writeString(message + "\n");
-  if (message === this.lastException.message) {
-    for each (let frame in this.lastException.frames) {
-      this.file.writeString("\t" + frame + "\n");
-    }
-  } else {
-    if (aMessage instanceof Ci.nsIScriptError) {
-      this.file.writeString("\t" +
-                            (aMessage.sourceName ? aMessage.sourceName : "") +
-                            (aMessage.lineNumber ? " line " + aMessage.lineNumber : "") +
-                            (aMessage.columnNumber ? " : " + aMessage.columnNumber : "") +
-                            "\n");
-      if (aMessage.sourceLine) {
-        this.file.writeString("\t" + aMessage.sourceLine + "\n");
-      }
-    }
-    this.file.writeString("\t[stack unavailable]\n");
-  }
-};
-
 /***** jsdIExecutionHook *****/
 Logophile.prototype.onExecute =
 function Logophile_onExecute(aFrame, aType, aVal) {
   try {
-    /*
-    this.file.writeString(aMessage + "\n");
-    let exc = aExc.getWrappedValue();
-    for each (let frame in (exc.stack || "").split(/\n/)) {
-      this.file.writeString("\t" + frame + "\n");
-    }
-    */
-    /*
-    let props = {}, val = aVal.value.getWrappedValue();
-    try {
-      for (let proto = val; proto !== null; proto = Object.getPrototypeOf(proto)) {
-        Object.getOwnPropertyNames(proto).forEach(function(n) props[n] = true);
-      }
-      this.file.writeString("\t" + Object.keys(props).sort() + "\n");
-    } catch (ex) {
-      this.file.writeString("\t" + val + "\n");
-    }
-    */
     let exception = {};
     if (aVal.value.isNumber) {
       let name = Object.keys(Cr).filter(function(n) /^NS_/.test(n) && Cr[n] === aVal.value.doubleValue);
@@ -137,12 +95,106 @@ Logophile.prototype.onDebuggerActivated = function Logophile_onDebuggerActivated
   jsd.flags = Ci.jsdIDebuggerService.ENABLE_NATIVE_FRAMES;
 };
 
+/***** nsIConosoleListener *****/
+Logophile.prototype.observeMessage = function Logophile_observeMessage(aMessage) {
+  try {
+    let nsIScriptError = Ci.nsIScriptError2 || Ci.nsIScriptError;
+    aMessage instanceof Ci.nsIScriptError;
+    aMessage instanceof nsIScriptError;
+    let tags = aMessage.category.split(/\s+/g) || [];
+    switch (true) {
+      case !!(aMessage.flags & Ci.nsIScriptError.exceptionFlag):
+        tags.push("EXCEPTION"); break;
+      case !!(aMessage.flags & Ci.nsIScriptError.errorFlag):
+        tags.push("ERROR"); break;
+      case !!(aMessage.flags & Ci.nsIScriptError.warningFlag):
+        tags.push("WARNING"); break;
+      case !!(aMessage.flags & Ci.nsIScriptError.strictFlag):
+        tags.push("STRICT"); break;
+    }
+    if (tags.length > 0) {
+      this.file.writeString("[" + tags.join(" ") + "]: ");
+    }
+    let message = aMessage instanceof Ci.nsIScriptError ?
+                  aMessage.errorMessage :
+                  aMessage.message;
+    this.file.writeString(message + "\n");
+
+    if (message === this.lastException.message) {
+      for each (let frame in this.lastException.frames) {
+        this.file.writeString("\t" + frame + "\n");
+      }
+    } else {
+      if (aMessage instanceof Ci.nsIScriptError) {
+        this.file.writeString("\t" +
+                              (aMessage.sourceName ? aMessage.sourceName : "") +
+                              (aMessage.lineNumber ? " line " + aMessage.lineNumber : "") +
+                              (aMessage.columnNumber ? " : " + aMessage.columnNumber : "") +
+                              "\n");
+        if (aMessage.sourceLine) {
+          this.file.writeString("\t" + aMessage.sourceLine + "\n");
+        }
+      }
+      for (let frame = Components.stack; frame; frame = frame.caller) {
+        if (frame.filename == Components.stack.filename) {
+          continue; // Skip frames from Logophile
+        }
+        this.file.writeString("\t" + frame + "\n");
+      }
+    }
+  } catch (ex) {
+    dump(ex);
+    /* don't infinite loop, thanks */
+  }
+};
+
+/***** nsIConsoleService *****/
+Logophile.prototype.logMessage = function Logophile_logMessage(aMessage) {
+  this._consoleService.logMessage(aMessage);
+  this.observeMessage(aMessage);
+}
+Logophile.prototype.logStringMessage = function Logophile_logStringMessage(aMessage) {
+  this._consoleService.logStringMessage(aMessage);
+}
+Logophile.prototype.getMessageArray = function Logophile_getMessageArray(aMessages, aCount) {
+  this._consoleService.getMessageArray(aMessages, aCount);
+}
+Logophile.prototype.registerListener = function Logophile_registerListener(aListener) {
+  this._consoleService.registerListener(aListener);
+}
+Logophile.prototype.unregisterListener = function Logophile_unregisterListener(aListener) {
+  this._consoleService.unregisterListener(aListener);
+}
+Logophile.prototype.reset = function Logophile_reset() {
+  this._consoleService.reset();
+}
+
+/***** nsISupports *****/
+
 Logophile.prototype.QueryInterface =
   XPCOMUtils.generateQI([Ci.nsIObserver,
                          Ci.jsdIExecutionHook,
-                         Ci.jsdIActivationCallback]);
+                         Ci.jsdIActivationCallback,
+                         Ci.nsIConsoleService]);
 
 Logophile.prototype.classID =
   Components.ID("{a95116d1-a818-44ac-a865-04165b166e7e}");
 
 const NSGetFactory = XPCOMUtils.generateNSGetFactory([Logophile]);
+
+try {
+  Logophile.prototype._consoleService =
+    Cc["@mozilla.org/consoleservice;1"].getService(Ci.nsIConsoleService);
+
+  Cm.QueryInterface(Ci.nsIComponentRegistrar)
+    .unregisterFactory(Components.ID(Cc["@mozilla.org/consoleservice;1"].number),
+                       Cm.getClassObjectByContractID("@mozilla.org/consoleservice;1",
+                                                     Ci.nsIFactory));
+
+  Cm.registerFactory(Components.ID("{db5f4dd0-9610-453c-a90f-6168ce2bb85e}"),
+                     "LogophileConsoleService",
+                     "@mozilla.org/consoleservice;1",
+                     NSGetFactory(Logophile.prototype.classID));
+} catch (ex) {
+  dump(ex);
+}
