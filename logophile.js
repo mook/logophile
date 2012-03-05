@@ -112,11 +112,15 @@ function Logophile_onExecute(aFrame, aType, aVal) {
       // repeated exception
     } else {
       // new exception
+      this.lastException = exception;
+      if (/^Component returned failure code: 0x8000ffff \(NS_ERROR_UNEXPECTED\) \[nsIPrefBranch2?.get(?:(?:Int|Bool|Char)Pref|ComplexValue)\]$/.test(exception.message)) {
+        // Don't display messages about prefs unless uncaught
+        return undefined;
+      }
       this.file.writeString(exception.message + "\n");
       for each (let frame in exception.frames) {
         this.file.writeString("\t" + frame + "\n");
       }
-      this.lastException = exception;
     }
   } catch (ex) {
     Components.utils.reportError(ex);
